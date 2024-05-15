@@ -1,55 +1,105 @@
 import sharp from "sharp"
+import yargs from "yargs"
+import { hideBin } from "yargs/helpers"
 import fs from "fs"
 import path from "path"
-import chalk from "chalk"
+import { log } from "./log.mjs"
+import { slugify } from "./slugify.mjs"
+const argv = yargs(hideBin(process.argv)).argv
 
-// convert string to dash-case and remove special characters and accents
-const slugify = (input) => {
-  let slug = input.toLowerCase()
-  slug = slug.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-  slug = slug.replace(/[^a-z0-9\s-]/g, "").trim()
-  slug = slug.replace(/[\s-]+/g, "-")
-  return slug
+const options = {
+  target: argv._[0] ? argv._[0] : process.cwd(),
+  width: argv.width,
+  height: argv.height,
+  fit: argv.fit,
+  position: argv.position,
+  quality: argv.quality ?? 80,
+  prefix: argv.prefix ?? "",
+  overwrite: argv.overwrite ?? false,
 }
 
-// log styles
-const error = chalk.bold.red
-const info = chalk.gray
-const success = chalk.cyan
-const warning = chalk.hex("#FFA500") // Orange color
+console.log(options)
 
-// Use the current directory if no argument is passed
-const targetDir = process.argv[2] ? process.argv[2] : process.cwd()
+const addTempPrefixToFilePath = (filePath) =>
+  path.join(
+    path.dirname(filePath),
+    `${path.parse(filePath).name}-temp${path.extname(filePath)}`
+  )
 
-// Convert image files to WebP format and rename them
+/**
+ * Convert image files to WebP format and rename them
+ * @param {*} file
+ */
 const convertAndRenameToWebp = async (file) => {
-  const originalFilePath = path.join(targetDir, file)
-  const fileNameWithoutExt = path.parse(originalFilePath).name
-  const slugifiedName = slugify(fileNameWithoutExt)
-  const newFileName = `${slugifiedName}.webp`
-  const newFilePath = path.join(targetDir, newFileName)
+  const originalfilePath = path.join(options.target, file)
+  const originalFileNameWithoutExt = path.parse(originalfilePath).name
+  const originalSlugifiedName = slugify(originalFileNameWithoutExt)
+
+  const newFileName = `${originalSlugifiedName}${options.prefix}.webp`
+  const newFilePath = path.join(options.target, newFileName)
+  const newFilePathPrefixTemp = addTempPrefixToFilePath(newFilePath)
+
+  const outputFilePath = options.overwrite ? newFilePathPrefixTemp : newFilePath
+
+  if (originalfilePath === newFilePath && !options.overwrite) {
+    log.warning(
+      `Same file path, Add '--overwrite=true' option to replace the original. return.`
+    )
+    return
+  }
 
   try {
-    await sharp(originalFilePath).webp().toFile(newFilePath)
-    console.log(info(`${file}`))
-    console.log(success(`→ ${newFileName}`))
+    // Write
+    const shp = await sharp(originalfilePath)
+    if (options.width || options.height || options.fit || options.position) {
+      shp.resize({
+        width: options.width,
+        height: options.height,
+        position: options.position,
+        fit: options.fit,
+      })
+    }
+    shp.webp({ quality: options.quality })
+    await shp.toFile(outputFilePath)
+
+    // Get old size
+    const oldFileSize = (fs.statSync(originalfilePath).size / 1000).toFixed(2)
+
+    // if overwrite option is set to true, remove the original file
+    if (options.overwrite) {
+      fs.unlinkSync(originalfilePath)
+    }
+
+    // rename the new file to the original file name
+    if (options.overwrite) {
+      fs.renameSync(outputFilePath, originalfilePath)
+    }
+
+    const newFileSize = (fs.statSync(newFilePath).size / 1000).toFixed(2) // size in KB
+
+    log.info(file, `→ ${oldFileSize} KB`)
+    log.success(`${newFileName}`, `→ ${newFileSize} KB`)
+    log.info(`${(newFileSize - oldFileSize).toFixed(2)} KB \n`)
   } catch (err) {
-    console.error(error(`Error converting ${file}:`), err)
+    log.error(`Error converting ${file}:`, err)
   }
 }
 
-// Read the directory and filter for image files (PNG, JPG, JPEG)
-fs.readdir(targetDir, (err, files) => {
+/**
+ * When the script is executed
+ *  Read the directory and convert each image file to WebP format
+ */
+fs.readdir(options.target, (err, files) => {
   if (err) throw err
 
   const imageFiles = files.filter((file) => {
     const ext = path.extname(file).toLowerCase()
-    return ext === ".png" || ext === ".jpg" || ext === ".jpeg"
+    return ext === ".png" || ext === ".jpg" || ext === ".jpeg" || ext === ".webp"
   })
 
   // If no images are found, log a message
   if (imageFiles.length === 0) {
-    console.log(warning(`No images to convert founded in ${targetDir}`))
+    log.warning(`No images to convert founded in ${options.target}`)
     return
   }
 
