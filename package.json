@@ -10,5 +10,13 @@
     "chalk": "^5.3.0",
     "sharp": "^0.32.6",
     "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@wbe/debug": "^1.2.0",
+    "prettier": "^3.2.5"
+  },
+  "prettier": {
+    "singleQuote": true,
+    "semi": false
   }
 }
