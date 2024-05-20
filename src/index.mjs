@@ -96,7 +96,7 @@ const convertAndRenameToWebp = async (filePath) => {
     const isEquals = newFileSize - oldFileSize === 0
 
     const diffSymbol = isDecreased ? '↓' : isEquals ? '=' : '↑'
-    const diffColor = isDecreased ? 'green' : isEquals ? 'yellow' : 'orange'
+    const diffColor = isDecreased ? 'green' : isEquals ? 'yellow' : 'red'
 
     console.log(
       chalk[diffColor](
