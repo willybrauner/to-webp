@@ -19,6 +19,8 @@ const options = {
   quality: (argv.quality || argv.q) ?? 80,
   prefix: (argv.prefix || argv.p) ?? '',
   overwrite: (argv.overwrite || argv.o) ?? false,
+  walker: (argv.walker) ?? false,
+  removeOriginalMedia: argv['remove-original-media'] ?? false,
 }
 
 debug('options', options)
@@ -87,6 +89,11 @@ const convertAndRenameToWebp = async (filePath) => {
       fs.renameSync(outputFilePath, filePath)
     }
 
+    // if remove option is set to true, delete the original source file
+    if (options.removeOriginalMedia && filePath !== newFilePath) {
+      fs.unlinkSync(filePath)
+    }
+
     const newFileSize = (fs.statSync(newFilePath).size / 1000).toFixed(2) // size in KB
 
     log.info(filePath, `→ ${oldFileSize} KB`)
@@ -108,37 +115,49 @@ const convertAndRenameToWebp = async (filePath) => {
   }
 }
 
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp']
+
+const isImageFile = (filePath) =>
+  IMAGE_EXTENSIONS.includes(path.extname(filePath).toLowerCase())
+
+const collectImagesRecursive = (dir) => {
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+  return entries.flatMap((entry) => {
+    const fullPath = path.join(dir, entry.name)
+    if (entry.isDirectory()) return collectImagesRecursive(fullPath)
+    if (entry.isFile() && isImageFile(entry.name)) return [fullPath]
+    return []
+  })
+}
+
 /**
  * When the script is executed
  *  Read the directory and convert each image file to WebP format
  */
-// check if the target is a directory of a file
 const isDirectory = fs.lstatSync(options.target).isDirectory()
 const isFile = fs.lstatSync(options.target).isFile()
 
 if (isDirectory) {
-  fs.readdir(options.target, (err, files) => {
-    if (err) throw err
-    const imageFiles = files.filter((file) => {
-      const ext = path.extname(file).toLowerCase()
-      return (
-        ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp'
-      )
-    })
+  let imageFiles
 
-    // If no images are found, log a message
-    if (imageFiles.length === 0) {
-      log.warning(`No images to convert founded in ${options.target}`)
-      return
+  if (options.walker) {
+    imageFiles = collectImagesRecursive(options.target)
+  } else {
+    imageFiles = fs
+      .readdirSync(options.target)
+      .filter(isImageFile)
+      .map((f) => path.join(options.target, f))
+  }
+
+  if (imageFiles.length === 0) {
+    log.warning(`No images to convert founded in ${options.target}`)
+  } else {
+    for (const filePath of imageFiles) {
+      await convertAndRenameToWebp(filePath)
     }
-
-    // Convert each image file to WebP format and rename
-    imageFiles.forEach((e) => {
-      convertAndRenameToWebp(path.join(options.target, e))
-    })
-  })
+  }
 }
 
 if (isFile) {
-  convertAndRenameToWebp(options.target)
+  await convertAndRenameToWebp(options.target)
 }
