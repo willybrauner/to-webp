@@ -2,7 +2,9 @@ import sharp from 'sharp'
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
+import { execFileSync } from 'child_process'
 import { log } from './log.mjs'
 import { slugify } from './slugify.mjs'
 const argv = yargs(hideBin(process.argv)).argv
@@ -11,7 +13,7 @@ import chalk from 'chalk'
 const debug = debugg('towebp')
 
 const options = {
-  target: argv._[0] ? argv._[0] : process.cwd(),
+  targets: argv._.length ? argv._.map(String) : [process.cwd()],
   width: argv.width || argv.w,
   height: argv.height || argv.h,
   fit: argv.fit,
@@ -30,6 +32,25 @@ const addTempPrefixToFilePath = (filePath) =>
     path.dirname(filePath),
     `${path.parse(filePath).name}-temp${path.extname(filePath)}`,
   )
+
+const HEIC_EXTENSIONS = ['.heic', '.heif']
+
+/**
+ * sharp's prebuilt libvips does not ship the HEVC decoder (licensing), so it
+ * fails to read real iPhone HEIC photos ("Unsupported codec"). macOS itself
+ * can decode HEIC natively via `sips`, so pre-convert to a temp PNG with it
+ * and let sharp pick up from there.
+ */
+const convertHeicToTempPng = (filePath) => {
+  const tempPngPath = path.join(
+    os.tmpdir(),
+    `${path.parse(filePath).name}-${Date.now()}.png`,
+  )
+  execFileSync('sips', ['-s', 'format', 'png', filePath, '--out', tempPngPath], {
+    stdio: 'pipe',
+  })
+  return tempPngPath
+}
 
 /**
  * Convert image files to WebP format and rename them
@@ -62,9 +83,18 @@ const convertAndRenameToWebp = async (filePath) => {
     return
   }
 
+  const isHeic = HEIC_EXTENSIONS.includes(path.extname(filePath).toLowerCase())
+  let sourceFilePath = filePath
+  let tempHeicPngPath = null
+
   try {
+    if (isHeic) {
+      tempHeicPngPath = convertHeicToTempPng(filePath)
+      sourceFilePath = tempHeicPngPath
+    }
+
     // Write
-    const shp = await sharp(filePath)
+    const shp = await sharp(sourceFilePath)
     if (options.width || options.height || options.fit || options.position) {
       shp.resize({
         width: options.width,
@@ -112,10 +142,14 @@ const convertAndRenameToWebp = async (filePath) => {
     )
   } catch (err) {
     log.error(`> Error converting ${filePath}:`, err)
+  } finally {
+    if (tempHeicPngPath && fs.existsSync(tempHeicPngPath)) {
+      fs.unlinkSync(tempHeicPngPath)
+    }
   }
 }
 
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp']
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', ...HEIC_EXTENSIONS]
 
 const isImageFile = (filePath) =>
   IMAGE_EXTENSIONS.includes(path.extname(filePath).toLowerCase())
@@ -132,32 +166,34 @@ const collectImagesRecursive = (dir) => {
 
 /**
  * When the script is executed
- *  Read the directory and convert each image file to WebP format
+ *  Read the directory (or each glob-expanded target) and convert each image file to WebP format
  */
-const isDirectory = fs.lstatSync(options.target).isDirectory()
-const isFile = fs.lstatSync(options.target).isFile()
+for (const target of options.targets) {
+  const isDirectory = fs.lstatSync(target).isDirectory()
+  const isFile = fs.lstatSync(target).isFile()
 
-if (isDirectory) {
-  let imageFiles
+  if (isDirectory) {
+    let imageFiles
 
-  if (options.walker) {
-    imageFiles = collectImagesRecursive(options.target)
-  } else {
-    imageFiles = fs
-      .readdirSync(options.target)
-      .filter(isImageFile)
-      .map((f) => path.join(options.target, f))
-  }
+    if (options.walker) {
+      imageFiles = collectImagesRecursive(target)
+    } else {
+      imageFiles = fs
+        .readdirSync(target)
+        .filter(isImageFile)
+        .map((f) => path.join(target, f))
+    }
 
-  if (imageFiles.length === 0) {
-    log.warning(`No images to convert founded in ${options.target}`)
-  } else {
-    for (const filePath of imageFiles) {
-      await convertAndRenameToWebp(filePath)
+    if (imageFiles.length === 0) {
+      log.warning(`No images to convert founded in ${target}`)
+    } else {
+      for (const filePath of imageFiles) {
+        await convertAndRenameToWebp(filePath)
+      }
     }
   }
-}
 
-if (isFile) {
-  await convertAndRenameToWebp(options.target)
+  if (isFile) {
+    await convertAndRenameToWebp(target)
+  }
 }
