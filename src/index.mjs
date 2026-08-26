@@ -126,18 +126,17 @@ const convertAndRenameToWebp = async (filePath) => {
 
     const newFileSize = (fs.statSync(newFilePath).size / 1000).toFixed(2) // size in KB
 
-    log.info(filePath, `→ ${oldFileSize} KB`)
-    log.success(`${newFilePath}`, `→ ${newFileSize} KB`)
-
     const isDecreased = newFileSize - oldFileSize < 0
     const isEquals = newFileSize - oldFileSize === 0
 
     const diffSymbol = isDecreased ? '↓' : isEquals ? '=' : '↑'
     const diffColor = isDecreased ? 'green' : isEquals ? 'yellow' : 'red'
+    const diffPercent = oldFileSize == 0 ? 0 : ((newFileSize - oldFileSize) / oldFileSize) * 100
 
+    log.info(filePath, `→ ${oldFileSize} KB`)
     console.log(
       chalk[diffColor](
-        `${diffSymbol} ${(newFileSize - oldFileSize).toFixed(2)} KB \n`,
+        `${newFilePath} → ${newFileSize} KB  ${diffSymbol} ${(newFileSize - oldFileSize).toFixed(2)} KB (${diffPercent.toFixed(1)}%) \n`,
       ),
     )
   } catch (err) {
